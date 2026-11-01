@@ -157,29 +157,44 @@ class femboydownloaderApplication(Adw.Application):
     def on_response(self, dialog, response):
         return
     
-    def async_on_refresh_action(self, widget=""):
-        t = threading.Thread(target=self.on_refresh_action, args=(self,))
-        t.start()
+    def async_on_refresh_action(self, widget=None):
+        if getattr(self, "_refresh_in_progress", False):
+            return
+        self._refresh_in_progress = True
+        self.refresh.set_sensitive(False)
         self.image.set_visible(False)
         self.spinner.set_visible(True)
         self.spinner.start()
-        t.join
+        try:
+            threading.Thread(target=self.on_refresh_action, daemon=True).start()
+        except Exception as exc:
+            self._finish_refresh(("Refresh failed", {"errors": str(exc)}))
 
-        
-    def on_refresh_action(self, widget=""):
-        a = jp.reloadimage()
-        path = Path(tempfile.gettempdir()) / "femboydownloader" / "response.jpg"
-        self.image.set_from_file(str(path))
-        self.spinner.stop()
-        self.spinner.set_visible(False)
-        self.image.set_visible(True)
-        if a != True:
-            error = a[1]["errors"]
-            log_error(f"{a[0]}, {a[1]}")
-            self.show_error_dialog(self, f'{a[0]}', f"{error}")
-        
-        
-    
+    def on_refresh_action(self, widget=None):
+        try:
+            result = jp.reloadimage()
+        except Exception as exc:
+            result = ("Refresh failed", {"errors": str(exc)})
+        GLib.idle_add(self._finish_refresh, result)
+
+    def _finish_refresh(self, result):
+        try:
+            if result is True:
+                path = Path(tempfile.gettempdir()) / "femboydownloader" / "response.jpg"
+                self.image.set_from_file(str(path))
+            else:
+                title, details = result
+                message = str(details.get("errors", "Unknown error"))
+                log_error(f"{title}: {message}")
+                self.show_error_dialog(self, str(title), message)
+        finally:
+            self.spinner.stop()
+            self.spinner.set_visible(False)
+            self.image.set_visible(True)
+            self.refresh.set_sensitive(True)
+            self._refresh_in_progress = False
+        return GLib.SOURCE_REMOVE
+
     def create_action(self, name, callback, shortcuts=None):
         """Add an application action.
 
